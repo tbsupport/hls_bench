@@ -1,0 +1,14 @@
+{application, hls_bench,
+ [
+  {description, ""},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib,
+                  lager,
+                  hackney
+                 ]},
+  {mod, { hls_bench_app, []}},
+  {env, []}
+ ]}.
