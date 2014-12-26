@@ -1,0 +1,41 @@
+#!/usr/bin/env escript
+%% -*- erlang -*-
+main([Url, Workers]) ->
+    load_deps(),
+    hls_bench:start(),
+    N = list_to_integer(Workers),
+    hls_bench_server:start(Url, N),
+    loop(N),
+    timer:sleep(3000);
+
+main(_) ->
+    ok.
+
+loop(0) ->
+    ok;
+
+loop(N) ->
+    receive 
+        _Status ->
+            loop(N - 1)
+    end.
+
+load_deps() ->
+    Dir = filename:dirname(escript:script_name()) ++ "/../",
+    Deps = filelib:wildcard(Dir ++ "deps/*/ebin"),
+    ok = code:add_paths([Dir ++ "ebin" | Deps]),
+    [Env] = load_file_config(Dir ++ "files", "app.config"),
+    load_config(Env).
+
+load_config([]) ->
+    ok;
+
+load_config([{App, AppEnv} | Env]) ->
+    [application:set_env(App, Key, Value) || {Key, Value} <- AppEnv],
+    load_config(Env).
+
+load_file_config(Path,File) ->
+  case file:path_consult([Path],File) of
+    {ok, Env, _Path} -> Env;
+     _ -> []
+  end.
