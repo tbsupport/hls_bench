@@ -1,23 +1,23 @@
 #!/usr/bin/env escript
 %% -*- erlang -*-
-main([Url, Workers]) ->
+main([Url | Options]) ->
+    {Workers, Segments} = parse_options(Options),
     load_deps(),
     hls_bench:start(),
-    N = list_to_integer(Workers),
-    hls_bench_server:start(Url, N),
-    loop(N),
+    loop(Workers, Url, Segments),
     timer:sleep(3000);
 
 main(_) ->
     ok.
 
-loop(0) ->
+loop([], _Url, _Segments) ->
     ok;
 
-loop(N) ->
+loop([N | Workers], Url, Segments) ->
+    hls_bench_server:start(Url, N, Segments),
     receive 
         _Status ->
-            loop(N - 1)
+            loop(Workers, Url, Segments)
     end.
 
 load_deps() ->
@@ -39,3 +39,15 @@ load_file_config(Path,File) ->
     {ok, Env, _Path} -> Env;
      _ -> []
   end.
+
+parse_options(Options) ->
+    parse_options(Options, []).
+
+parse_options([], Acc) ->
+    {lists:reverse(Acc), 20};
+
+parse_options(["-s", N], Acc) ->
+    {lists:reverse(Acc), list_to_integer(N)};
+
+parse_options([N | Options], Acc) ->
+    parse_options(Options, [list_to_integer(N) | Acc]).

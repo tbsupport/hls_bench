@@ -14,7 +14,8 @@
 	start = 0 :: non_neg_integer(),
 	finish = 0 :: non_neg_integer(),
 	seq = 0 :: non_neg_integer(),
-	play = start ::  start | wait | play | {idle, non_neg_integer()}
+	play = start ::  start | wait | play | {idle, non_neg_integer()},
+	number = 1 :: non_neg_integer()
 	}).
 
 -record(playlist, {
@@ -114,33 +115,35 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
 
-play(#state{id = Id, queue = Segments, finish = Finish, start = Start, play = start, duration = Duration} = State) when Finish - Start >= 3 * Duration ->
+play(#state{id = Id, queue = Segments, finish = Finish, start = Start, play = start, duration = Duration, number = Number} = State) when Finish - Start >= 3 * Duration ->
 	case queue:out(Segments) of
 		{empty, _} ->
 			State;
 		{{value, SegDuration}, NewSegments} ->
 			?D({Id, start}),
 			erlang:send_after(SegDuration, self(), play),
-			State#state{start = Start + SegDuration, play = play, queue = NewSegments}
+			State#state{start = Start + SegDuration, play = play, queue = NewSegments, number = Number + 1}
    	end;
 
-play(#state{queue = Segments, finish = Finish, start = Start, play = wait, duration = Duration} = State) when Finish - Start >= 3 * Duration ->
+play(#state{queue = Segments, finish = Finish, start = Start, play = wait, duration = Duration, number = Number} = State) when Finish - Start >= 3 * Duration ->
 	case queue:out(Segments) of
 		{empty, _} ->
 			State#state{play = {idle, ulitos:timestamp()}};
 		{{value, SegDuration}, NewSegments} ->
 			erlang:send_after(SegDuration, self(), play),
-			State#state{start = Start + SegDuration, play = play, queue = NewSegments}
+			State#state{start = Start + SegDuration, play = play, queue = NewSegments, number = Number + 1}
    	end;
 
-play(#state{id = Id, queue = Segments, finish = Finish, seq = Seq, start = Start, play = {idle, Ts},  duration = Duration} = State) when Finish - Start >= 3 * Duration ->
+play(#state{id = Id, queue = Segments, finish = Finish, start = Start, play = {idle, Ts},  duration = Duration, number = Number} = State) when Finish - Start >= 3 * Duration ->
 	case queue:out(Segments) of
 		{empty, _} ->
 			State#state{play = idle};
 		{{value, SegDuration}, NewSegments} ->
-			?D({Id, idle, ulitos:timestamp() - Ts, Seq}),
+			Delay = ulitos:timestamp() - Ts,
+			?D({Id, idle, Delay, Number}),
+			hls_bench_server:aggregate(Delay, Number),
 			erlang:send_after(SegDuration, self(), play),
-			State#state{start = Start + SegDuration, play = play, queue = NewSegments}
+			State#state{start = Start + SegDuration, play = play, queue = NewSegments, number = Number + 1}
    	end;
 
 play(#state{play = wait} = State) ->
