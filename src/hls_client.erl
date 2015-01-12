@@ -4,6 +4,7 @@
 -include("log.hrl").
 
 -record(state, {
+	id :: non_neg_integer(),
 	host :: binary(),
 	url :: binary(),
 	count :: non_neg_integer(),
@@ -13,7 +14,7 @@
 	start = 0 :: non_neg_integer(),
 	finish = 0 :: non_neg_integer(),
 	seq = 0 :: non_neg_integer(),
-	play = false :: true | false
+	play = start ::  start | wait | play | idle
 	}).
 
 -record(playlist, {
@@ -27,7 +28,7 @@
 %% API Function Exports
 %% ------------------------------------------------------------------
 
--export([start/2, start_link/2]).
+-export([start/3, start_link/3]).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Exports
@@ -40,20 +41,20 @@
 %% API Function Definitions
 %% ------------------------------------------------------------------
 
-start_link(Url, Count) ->
-    gen_server:start_link(?MODULE, [Url, Count], []).
+start_link(Id, Url, Count) ->
+    gen_server:start_link(?MODULE, [Id, Url, Count], []).
 
-start(Url, Count) ->
-	hls_bench_sup:start_client(Url, Count).
+start(Id, Url, Count) ->
+	hls_bench_sup:start_client(Id, Url, Count).
 
 %% ------------------------------------------------------------------
 %% gen_server Function Definitions
 %% ------------------------------------------------------------------
 
-init([Url, Count]) ->
+init([Id, Url, Count]) ->
 	{ok, Loader} = hls_loader:start(self()),
 	self() ! playlist,
-    {ok, #state{host = host(Url), url = iolist_to_binary(Url), count = Count, loader = Loader}}.
+    {ok, #state{id = Id, host = host(Url), url = iolist_to_binary(Url), count = Count, loader = Loader}}.
 
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
@@ -66,7 +67,6 @@ handle_info(playlist, #state{loader = Loader, url = Url} = State) ->
 	{noreply, State};
 
 handle_info({playlist, Playlist}, #state{host = Host, loader = Loader, start = Start, finish = Finish, seq = CurrentSeq} = State) ->
-	?D(Playlist),
 	case parse_playlist(Playlist) of
 		#playlist{finish = true} ->
 			?D("End of stream"),
@@ -75,22 +75,30 @@ handle_info({playlist, Playlist}, #state{host = Host, loader = Loader, start = S
 			{NewFinish, NewCurrentSeq} = update_segments(Loader, Host, CurrentSeq, Finish, Segments, Seq),
 			if 
 				Finish - Start < 3 * TargetDuration ->
-					erlang:send_after(TargetDuration * 500, self(), playlist);
+					erlang:send_after(TargetDuration bsr 1, self(), playlist);
 				true ->
-					erlang:send_after(TargetDuration * 1000, self(), playlist)
+					erlang:send_after(TargetDuration, self(), playlist)
 			end,
-			{noreply, State#state{duration = TargetDuration, finish = NewFinish, seq = NewCurrentSeq}};
+			NewState = State#state{duration = TargetDuration, finish = NewFinish, seq = NewCurrentSeq},
+			{noreply, play(NewState)};
 		_Else ->
 			?D(_Else),
 			{stop, normal, State}
 	end;
 
 handle_info({segment, Duration}, #state{queue = Queue} = State) ->
-	?D(Duration),
-	{noreply, State#state{queue = queue:in(Duration, Queue)}};
+	NewState = State#state{queue = queue:in(Duration, Queue)},
+	{noreply, play(NewState)};
 
-handle_info({error, Reason}, State)	->
-	?D({error, Reason}),
+handle_info(play, #state{id = Id, count = 0} = State) ->
+	?D({Id, finish}),
+	{stop, normal, State};
+
+handle_info(play, #state{count = Count} = State) ->
+	{noreply, play(State#state{count = Count - 1, play = wait})};
+
+handle_info({error, Reason}, #state{id = Id} = State)	->
+	?D({Id, error, Reason}),
 	{stop, normal, State};
 
 handle_info(_Info, State) ->
@@ -105,6 +113,41 @@ code_change(_OldVsn, State, _Extra) ->
 %% ------------------------------------------------------------------
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
+
+play(#state{id = Id, queue = Segments, finish = Finish, start = Start, play = start, duration = Duration} = State) when Finish - Start >= 3 * Duration ->
+	case queue:out(Segments) of
+		{empty, _} ->
+			State;
+		{{value, SegDuration}, NewSegments} ->
+			?D({Id, start}),
+			erlang:send_after(SegDuration, self(), play),
+			State#state{start = Start + SegDuration, play = play, queue = NewSegments}
+   	end;
+
+play(#state{queue = Segments, finish = Finish, start = Start, play = wait, duration = Duration} = State) when Finish - Start >= 3 * Duration ->
+	case queue:out(Segments) of
+		{empty, _} ->
+			State#state{play = idle};
+		{{value, SegDuration}, NewSegments} ->
+			erlang:send_after(SegDuration, self(), play),
+			State#state{start = Start + SegDuration, play = play, queue = NewSegments}
+   	end;
+
+play(#state{id = Id, queue = Segments, finish = Finish, start = Start, play = idle, duration = Duration} = State) when Finish - Start >= 3 * Duration ->
+	case queue:out(Segments) of
+		{empty, _} ->
+			State#state{play = idle};
+		{{value, SegDuration}, NewSegments} ->
+			?D({Id, idle, Start}),
+			erlang:send_after(SegDuration, self(), play),
+			State#state{start = Start + SegDuration, play = play, queue = NewSegments}
+   	end;
+
+play(#state{play = wait} = State) ->
+	State#state{play = idle};
+
+play(#state{} = State) ->
+	State.
 
 host(URL) ->
 	get_host(lists:reverse(URL)).
@@ -121,7 +164,7 @@ parse_playlist([<<"EXTM3U">> | Tags], Playlist) ->
 	parse_playlist(Tags, Playlist);
 
 parse_playlist([<<"EXT-X-TARGETDURATION:", Number/binary>> | Tags], Playlist) ->
-	parse_playlist(Tags, Playlist#playlist{target_duration = binary_to_integer(Number)});
+	parse_playlist(Tags, Playlist#playlist{target_duration = 1000 * binary_to_integer(Number)});
 
 parse_playlist([<<"EXT-X-VERSION:", Number/binary>> | Tags], Playlist) -> 
 	parse_playlist(Tags, Playlist#playlist{version = binary_to_integer(Number)});	

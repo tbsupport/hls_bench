@@ -4,7 +4,7 @@
 
 -include("log.hrl").
 
--define(Segments, 100).
+-define(Segments, 20).
 
 -record(state, {
 	feedback :: pid()
@@ -74,7 +74,7 @@ start_workers(_Url, 0) ->
 	ok;
 
 start_workers(Url, N) ->
-	{ok, Worker} = hls_client:start(Url, ?Segments), 
+	{ok, Worker} = hls_client:start(N, Url, ?Segments), 
 	erlang:monitor(process, Worker),
 	start_workers(Url, N - 1).
 

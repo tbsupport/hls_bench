@@ -65,15 +65,14 @@ handle_cast({playlist, Playlist}, #state{playlist = undefined, load = false} = S
 	spawn_link(fun() -> loader(playlist, Playlist, Self) end),
     {noreply, State#state{load = true}};
 
-handle_cast({playlist, Playlist}, #state{playlist = undfined, load = true} = State) ->
+handle_cast({playlist, Playlist}, #state{playlist = undefined, load = true} = State) ->
     {noreply, State#state{playlist = Playlist}};
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info({segment, _Body}, #state{owner = Owner, playlist = undefined, queue = Queue} = State) ->
-	{Url, Duration} = queue:get(Queue),
-	?D({downloaded, Url}),
+	{_, Duration} = queue:get(Queue),
 	Owner ! {segment, Duration},
 	NewQueue = queue:drop(Queue),
 	case queue:is_empty(NewQueue) of
@@ -87,8 +86,7 @@ handle_info({segment, _Body}, #state{owner = Owner, playlist = undefined, queue 
    	end;
 
 handle_info({segment, _Body}, #state{owner = Owner, playlist = Playlist, queue = Queue} = State) ->
-	{Url, Duration} = queue:get(Queue),
-	?D({downloaded, Url}),
+	{_, Duration} = queue:get(Queue),
 	Owner ! {segment, Duration},
 	Self = self(),
 	spawn_link(fun() -> loader(playlist, Playlist, Self) end),
@@ -139,7 +137,9 @@ loader(Type, Url, Pid) ->
                   Pid ! {error, hackney_error}
               end;
 		{ok, StatusCode, _, _} ->
-			Pid ! {error, {http_error, StatusCode}};
+			Pid ! {error, {http_error, StatusCode, Url}};
+		{error, closed} ->
+			loader(Type, Url, Pid);
 		{error, Reason} ->
 			Pid ! {error, Reason}
 	end.

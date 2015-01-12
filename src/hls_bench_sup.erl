@@ -3,7 +3,7 @@
 -behaviour(supervisor).
 
 %% API
--export([start_link/0, start_client/2, stop_client/1, start_loader/1, stop_loader/1]).
+-export([start_link/0, start_client/3, stop_client/1, start_loader/1, stop_loader/1]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -18,8 +18,8 @@
 start_link() ->
 	supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-start_client(Url, Count) ->
-	supervisor:start_child(hls_client_sup, [Url, Count]).
+start_client(Id, Url, Count) ->
+	supervisor:start_child(hls_client_sup, [Id, Url, Count]).
 
 stop_client(Pid) ->
 	supervisor:terminate_child(hls_client_sup, Pid).
