@@ -14,7 +14,7 @@
 	start = 0 :: non_neg_integer(),
 	finish = 0 :: non_neg_integer(),
 	seq = 0 :: non_neg_integer(),
-	play = start ::  start | wait | play | idle
+	play = start ::  start | wait | play | {idle, non_neg_integer()}
 	}).
 
 -record(playlist, {
@@ -127,24 +127,24 @@ play(#state{id = Id, queue = Segments, finish = Finish, start = Start, play = st
 play(#state{queue = Segments, finish = Finish, start = Start, play = wait, duration = Duration} = State) when Finish - Start >= 3 * Duration ->
 	case queue:out(Segments) of
 		{empty, _} ->
-			State#state{play = idle};
+			State#state{play = {idle, ulitos:timestamp()}};
 		{{value, SegDuration}, NewSegments} ->
 			erlang:send_after(SegDuration, self(), play),
 			State#state{start = Start + SegDuration, play = play, queue = NewSegments}
    	end;
 
-play(#state{id = Id, queue = Segments, finish = Finish, start = Start, play = idle, duration = Duration} = State) when Finish - Start >= 3 * Duration ->
+play(#state{id = Id, queue = Segments, finish = Finish, seq = Seq, start = Start, play = {idle, Ts},  duration = Duration} = State) when Finish - Start >= 3 * Duration ->
 	case queue:out(Segments) of
 		{empty, _} ->
 			State#state{play = idle};
 		{{value, SegDuration}, NewSegments} ->
-			?D({Id, idle, Start}),
+			?D({Id, idle, ulitos:timestamp() - Ts, Seq}),
 			erlang:send_after(SegDuration, self(), play),
 			State#state{start = Start + SegDuration, play = play, queue = NewSegments}
    	end;
 
 play(#state{play = wait} = State) ->
-	State#state{play = idle};
+	State#state{play = {idle, ulitos:timestamp()}};
 
 play(#state{} = State) ->
 	State.
